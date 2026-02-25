@@ -32,8 +32,8 @@ class CaseSimulator:
                 "roll_max": 100,
                 "open_price": 1,
                 "filters": {
-                    "rarity_visible": {},
-                    "item_visible": {},
+                    "rarity_hidden": {},
+                    "item_hidden": {},
                 },
                 "levels": LevelSettings().to_dict(),
             },
@@ -51,9 +51,13 @@ class CaseSimulator:
                 pass
 
         self.data.setdefault("settings", {})
-        self.data["settings"].setdefault("filters", {"rarity_visible": {}, "item_visible": {}})
-        self.data["settings"]["filters"].setdefault("rarity_visible", {})
-        self.data["settings"]["filters"].setdefault("item_visible", {})
+        self.data["settings"].setdefault("filters", {"rarity_hidden": {}, "item_hidden": {}})
+        filters = self.data["settings"]["filters"]
+        filters.setdefault("rarity_hidden", {})
+        filters.setdefault("item_hidden", {})
+        # Backward compatibility with old filter model.
+        filters.pop("rarity_visible", None)
+        filters.pop("item_visible", None)
         self.data["settings"].setdefault("levels", LevelSettings().to_dict())
 
         if not self.data.get("rarities"):
@@ -186,6 +190,7 @@ class CaseSimulator:
             return {"ok": False, "message": msg}
 
         result = []
+        visible_result = []
         settings = self.data["settings"]
         for _ in range(times):
             roll = random.uniform(settings["roll_min"], settings["roll_max"])
@@ -201,11 +206,31 @@ class CaseSimulator:
             self.data["stats"]["total_spent"] += settings["open_price"]
             self.data["stats"]["by_rarity"][rarity["id"]] = self.data["stats"]["by_rarity"].get(rarity["id"], 0) + 1
             self.data["stats"]["by_item"][item["id"]] = self.data["stats"]["by_item"].get(item["id"], 0) + 1
-            result.append({"roll": round(roll, 3), "rarity": rarity, "item": item})
+            drop = {
+                "roll": round(roll, 3),
+                "rarity": rarity,
+                "item": item,
+                "hidden_by_filter": self._is_hidden_drop(rarity["id"], item["id"]),
+            }
+            result.append(drop)
+            if not drop["hidden_by_filter"]:
+                visible_result.append(drop)
 
         self._append_history("open_case", {"times": times, "results": result[:100], "count_results": len(result)})
         self.save()
-        return {"ok": True, "results": result, "state": self.state()}
+        return {
+            "ok": True,
+            "results": result,
+            "visible_results": visible_result,
+            "hidden_results_count": len(result) - len(visible_result),
+            "state": self.state(),
+        }
+
+    def _is_hidden_drop(self, rarity_id: str, item_id: str) -> bool:
+        filters = self.data["settings"].setdefault("filters", {})
+        rarity_hidden = filters.setdefault("rarity_hidden", {})
+        item_hidden = filters.setdefault("item_hidden", {})
+        return bool(rarity_hidden.get(rarity_id) or item_hidden.get(item_id))
 
     def add_rarity(self, payload: dict) -> dict:
         rarity = asdict(Rarity.create(
@@ -275,7 +300,7 @@ class CaseSimulator:
         self.data["rarities"] = [r for r in self.data["rarities"] if r["id"] != rarity_id]
         if len(self.data["rarities"]) == before:
             return {"ok": False, "message": "Редкость не найдена"}
-        self.data["settings"].get("filters", {}).get("rarity_visible", {}).pop(rarity_id, None)
+        self.data["settings"].get("filters", {}).get("rarity_hidden", {}).pop(rarity_id, None)
         self._append_history("delete_rarity", {"rarity_id": rarity_id})
         self.save()
         return {"ok": True, "state": self.state()}
@@ -317,7 +342,7 @@ class CaseSimulator:
         if len(self.data["items"]) == before:
             return {"ok": False, "message": "Предмет не найден"}
         self.data["inventory"].pop(item_id, None)
-        self.data["settings"].get("filters", {}).get("item_visible", {}).pop(item_id, None)
+        self.data["settings"].get("filters", {}).get("item_hidden", {}).pop(item_id, None)
         self._append_history("delete_item", {"item_id": item_id})
         self.save()
         return {"ok": True, "state": self.state()}
@@ -344,7 +369,7 @@ class CaseSimulator:
         return {"ok": True, "state": self.state()}
 
     def set_filter_rarity(self, rarity_id: str, value: bool) -> dict:
-        rv = self.data["settings"].setdefault("filters", {}).setdefault("rarity_visible", {})
+        rv = self.data["settings"].setdefault("filters", {}).setdefault("rarity_hidden", {})
         if value:
             rv[rarity_id] = True
         else:
@@ -354,7 +379,7 @@ class CaseSimulator:
         return {"ok": True, "state": self.state()}
 
     def set_filter_item(self, item_id: str, value: bool) -> dict:
-        iv = self.data["settings"].setdefault("filters", {}).setdefault("item_visible", {})
+        iv = self.data["settings"].setdefault("filters", {}).setdefault("item_hidden", {})
         if value:
             iv[item_id] = True
         else:

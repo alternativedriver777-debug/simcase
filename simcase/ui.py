@@ -26,7 +26,7 @@ small{color:var(--muted)}
 </header>
 <div class="container">
   <div class="tabs card">
-    <button onclick="tab('open')">Открытие</button><button onclick="tab('items')">Предметы</button><button onclick="tab('rarities')">Редкости</button><button onclick="tab('inventory')">Инвентарь</button><button onclick="tab('settings')">Настройки</button>
+    <button onclick="tab('open')">Открытие</button><button onclick="tab('items')">Предметы</button><button onclick="tab('rarities')">Редкости</button><button onclick="tab('filters')">Лут-фильтр</button><button onclick="tab('inventory')">Инвентарь</button><button onclick="tab('settings')">Настройки</button>
   </div>
   <div class="grid">
     <section id="tab-open" class="card">
@@ -59,6 +59,15 @@ small{color:var(--muted)}
 
   <section id="tab-inventory" class="card hidden"><h3>Инвентарь</h3><table id="inventory-table"></table></section>
 
+  <section id="tab-filters" class="card hidden">
+    <h3>Лут-фильтр</h3>
+    <small>Выберите редкости и предметы, которые нужно скрывать в результатах выпадения.</small>
+    <h4>Скрывать по редкости</h4>
+    <div id="filters-rarity" class="row"></div>
+    <h4>Скрывать конкретные предметы</h4>
+    <table id="filters-items-table"></table>
+  </section>
+
   <section id="tab-settings" class="card hidden">
     <h3>Настройки симулятора и уровней</h3>
     <div class="row"><label>roll_min <input id="set-roll-min" type="number"></label><label>roll_max <input id="set-roll-max" type="number"></label><label>Цена открытия <input id="set-open-price" type="number"></label></div>
@@ -77,9 +86,10 @@ function renderPlayer(){const lv=state.level;document.getElementById('player-lev
 function renderItems(){document.getElementById('item-rarity').innerHTML=state.rarities.map(r=>`<option value="${r.id}">${r.name}</option>`).join(''); document.getElementById('items-table').innerHTML='<tr><th>Название</th><th>Редкость</th><th>Вес</th><th></th></tr>'+state.items.map(i=>`<tr><td>${i.name}</td><td>${badge(rarityById(i.rarity_id))}</td><td>${i.weight}</td><td><button onclick="delItem(\'${i.id}\')">Удалить</button></td></tr>`).join('')}
 function renderRarities(){const rows=state.rarities.sort((a,b)=>a.min_roll-b.min_roll).map(r=>`<tr data-id="${r.id}"><td><input data-k="name" value="${r.name}"></td><td><input data-k="min_roll" type="number" step="0.1" value="${r.min_roll}" style="width:90px"></td><td><input data-k="max_roll" type="number" step="0.1" value="${r.max_roll}" style="width:90px"></td><td><input data-k="color" type="color" value="${r.color}"></td><td><input data-k="drop_sound" value="${r.drop_sound||''}"></td><td><select data-k="drop_effect"><option ${!r.drop_effect?'selected':''} value="">—</option><option ${r.drop_effect==='neon'?'selected':''} value="neon">neon</option></select></td><td><button onclick="delRarity('${r.id}')">Удалить</button></td></tr>`).join('');document.getElementById('rarities-table').innerHTML=`<tr><th>Название</th><th>Min</th><th>Max</th><th>Цвет</th><th>Звук</th><th>Эффект</th><th></th></tr>${rows}`}
 function renderInventory(){const rows=Object.entries(state.inventory).map(([id,c])=>{const i=state.items.find(x=>x.id===id);if(!i)return '';return `<tr><td>${i.name}</td><td>${c}</td><td><button onclick="adj('${id}',1)">+1</button> <button onclick="adj('${id}',-1)">-1</button></td></tr>`}).join('');document.getElementById('inventory-table').innerHTML='<tr><th>Предмет</th><th>Кол-во</th><th></th></tr>'+rows}
+function renderFilters(){const f=state.settings.filters||{};const rh=f.rarity_hidden||{};const ih=f.item_hidden||{};document.getElementById('filters-rarity').innerHTML=state.rarities.map(r=>`<label style="display:flex;align-items:center;gap:6px;background:#0b1324;padding:6px 10px;border:1px solid var(--line);border-radius:8px"><input type="checkbox" ${rh[r.id]?'checked':''} onchange="toggleRarityFilter('${r.id}',this.checked)"> ${badge(r)}</label>`).join('')||'<i>Нет редкостей</i>';const rows=state.items.map(i=>{const r=rarityById(i.rarity_id);return `<tr><td>${i.name}</td><td>${r?badge(r):'—'}</td><td><label><input type="checkbox" ${ih[i.id]?'checked':''} onchange="toggleItemFilter('${i.id}',this.checked)"> скрывать</label></td></tr>`}).join('');document.getElementById('filters-items-table').innerHTML='<tr><th>Предмет</th><th>Редкость</th><th>Фильтр</th></tr>'+rows}
 function renderSettings(){const s=state.settings;document.getElementById('set-roll-min').value=s.roll_min;document.getElementById('set-roll-max').value=s.roll_max;document.getElementById('set-open-price').value=s.open_price;document.getElementById('set-base-xp').value=s.levels.base_xp;document.getElementById('set-xp-growth').value=s.levels.xp_growth}
-function renderAll(){renderPlayer();renderItems();renderRarities();renderInventory();renderSettings()}
-async function openCases(){const res=await api('open_case',parseInt(document.getElementById('open-times').value||'1',10));document.getElementById('open-results').innerHTML=res.results.slice(0,150).map(x=>`<div>${badge(x.rarity)} <b>${x.item.name}</b> <small>roll ${x.roll}</small></div>`).join('')||'<i>Ничего не выпало</i>'}
+function renderAll(){renderPlayer();renderItems();renderRarities();renderFilters();renderInventory();renderSettings()}
+async function openCases(){const res=await api('open_case',parseInt(document.getElementById('open-times').value||'1',10));const visible=(res.visible_results||res.results||[]).slice(0,150).map(x=>`<div>${badge(x.rarity)} <b>${x.item.name}</b> <small>roll ${x.roll}</small></div>`).join('')||'<i>Все выпадения скрыты фильтром</i>';const hiddenInfo=res.hidden_results_count?`<small>Скрыто фильтром: ${res.hidden_results_count}</small>`:'';document.getElementById('open-results').innerHTML=hiddenInfo+visible}
 async function addItem(){await api('add_item',{name:document.getElementById('item-name').value,rarity_id:document.getElementById('item-rarity').value,weight:parseFloat(document.getElementById('item-weight').value||'1'),image_path:document.getElementById('item-image').value,description:document.getElementById('item-description').value})}
 async function delItem(id){if(confirm('Удалить?')) await api('delete_item',id)}
 async function addRarity(){await api('add_rarity',{name:document.getElementById('rarity-name').value,min_roll:parseFloat(document.getElementById('rarity-min').value),max_roll:parseFloat(document.getElementById('rarity-max').value),color:document.getElementById('rarity-color').value,drop_sound:document.getElementById('rarity-sound').value,drop_effect:document.getElementById('rarity-effect').value})}
@@ -87,6 +97,8 @@ async function delRarity(id){if(confirm('Удалить?')) await api('delete_ra
 async function adj(id,d){await api('adjust_inventory',id,d)}
 async function normalizeRanges(){await api('normalize_rarity_ranges')}
 async function saveRarityBulk(){const rows=[...document.querySelectorAll('#rarities-table tr[data-id]')].map(tr=>{const obj={id:tr.dataset.id};for(const el of tr.querySelectorAll('[data-k]')) obj[el.dataset.k]=el.value;return obj});await api('update_rarities_bulk',rows)}
+async function toggleRarityFilter(id,hidden){await api('set_filter_rarity',id,hidden)}
+async function toggleItemFilter(id,hidden){await api('set_filter_item',id,hidden)}
 async function saveSettings(){await api('update_settings',{roll_min:parseFloat(document.getElementById('set-roll-min').value),roll_max:parseFloat(document.getElementById('set-roll-max').value),open_price:parseFloat(document.getElementById('set-open-price').value),levels:{base_xp:parseInt(document.getElementById('set-base-xp').value,10),xp_growth:parseFloat(document.getElementById('set-xp-growth').value)}})}
 window.addEventListener('pywebviewready',async()=>{const res=await window.pywebview.api.get_state();state=res.state;renderAll();});
 </script>
