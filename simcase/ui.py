@@ -52,14 +52,16 @@ small { color: var(--muted); }
 .drop-row { margin: 6px 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: color-mix(in oklab, var(--panel), transparent 12%); transition: transform .2s ease, box-shadow .25s ease; }
 .drop-row:hover { transform: translateY(-1px); }
 .drop-row .qty { margin-left: 8px; display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: #fff; background: color-mix(in oklab, var(--accent), black 12%); }
-.drop-row.effect-neon { box-shadow: 0 0 12px color-mix(in oklab, var(--accent), transparent 45%), 0 0 22px color-mix(in oklab, var(--accent), transparent 72%); }
+.drop-row.effect-neon { box-shadow: 0 0 12px color-mix(in oklab, var(--drop-color, var(--accent)), transparent 45%), 0 0 22px color-mix(in oklab, var(--drop-color, var(--accent)), transparent 72%); }
 .drop-row.effect-pulse { animation: pulseGlow 1.8s ease-in-out infinite; }
-.drop-row.effect-shimmer { background-image: linear-gradient(110deg, transparent 25%, color-mix(in oklab, var(--accent), white 80%) 48%, transparent 72%); background-size: 220% 100%; animation: shimmerMove 2.6s linear infinite; }
+.drop-row.effect-shimmer { background-image: linear-gradient(110deg, transparent 25%, color-mix(in oklab, var(--drop-color, var(--accent)), white 80%) 48%, transparent 72%); background-size: 220% 100%; animation: shimmerMove 2.6s linear infinite; }
 .drop-row.effect-ultra { border-color: #ffd54a; box-shadow: 0 0 14px color-mix(in oklab, #ffd54a, transparent 45%), 0 0 26px color-mix(in oklab, #ff5ec9, transparent 65%); background: radial-gradient(circle at top right, color-mix(in oklab, #ffd54a, transparent 72%), transparent 42%), color-mix(in oklab, var(--panel), transparent 10%); }
+.item-cell { display: inline-flex; align-items: center; gap: 8px; }
+.item-thumb { width: 34px; height: 34px; border-radius: 7px; object-fit: cover; border: 1px solid var(--line); background: var(--surface); }
 
 @keyframes pulseGlow {
   0%, 100% { box-shadow: 0 0 0 transparent; }
-  50% { box-shadow: 0 0 16px color-mix(in oklab, var(--accent), transparent 50%); }
+  50% { box-shadow: 0 0 16px color-mix(in oklab, var(--drop-color, var(--accent)), transparent 50%); }
 }
 
 @keyframes shimmerMove {
@@ -170,6 +172,28 @@ small { color: var(--muted); }
 <script>
 let state = null;
 
+function escapeHtml(value) {
+  const raw = `${value ?? ''}`;
+  return raw
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function imageSrc(path) {
+  if (!path) return '';
+  if (/^(https?:|data:|file:|\/)/i.test(path)) return path;
+  return `file://${encodeURI(path.replaceAll('\\', '/'))}`;
+}
+
+function itemThumb(path, alt = '') {
+  const src = imageSrc(path);
+  if (!src) return '';
+  return `<img class="item-thumb" src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" loading="lazy" onerror="this.style.display='none'">`;
+}
+
 function setStatus(text, isError = false) {
   const el = document.getElementById('status');
   el.textContent = text;
@@ -210,7 +234,7 @@ function renderPlayer() {
 
 function renderItems() {
   document.getElementById('item-rarity').innerHTML = state.rarities.map((r) => `<option value="${r.id}">${r.name}</option>`).join('');
-  const rows = state.items.map((i) => `<tr><td>${i.name}</td><td>${badge(rarityById(i.rarity_id))}</td><td>${i.weight}</td><td><button onclick="delItem('${i.id}')">Удалить</button></td></tr>`).join('');
+  const rows = state.items.map((i) => `<tr><td><span class="item-cell">${itemThumb(i.image_path, i.name)}${i.name}</span></td><td>${badge(rarityById(i.rarity_id))}</td><td>${i.weight}</td><td><button onclick="delItem('${i.id}')">Удалить</button></td></tr>`).join('');
   document.getElementById('items-table').innerHTML = `<tr><th>Название</th><th>Редкость</th><th>Вес</th><th></th></tr>${rows}`;
 }
 
@@ -231,7 +255,7 @@ function renderInventory() {
     .map(([id, c]) => {
       const i = state.items.find((x) => x.id === id);
       if (!i) return '';
-      return `<tr><td>${i.name}</td><td>${c}</td><td><button onclick="adj('${id}',1)">+1</button> <button onclick="adj('${id}',-1)">-1</button></td></tr>`;
+      return `<tr><td><span class="item-cell">${itemThumb(i.image_path, i.name)}${i.name}</span></td><td>${c}</td><td><button onclick="adj('${id}',1)">+1</button> <button onclick="adj('${id}',-1)">-1</button></td></tr>`;
     })
     .join('');
   document.getElementById('inventory-table').innerHTML = `<tr><th>Предмет</th><th>Кол-во</th><th></th></tr>${rows || '<tr><td colspan="3"><i>Инвентарь пуст</i></td></tr>'}`;
@@ -307,19 +331,13 @@ async function openCases() {
     if (drop.roll > current.bestRoll) current.bestRoll = drop.roll;
   }
 
-  const rollSpan = (state.settings.roll_max || 100) - (state.settings.roll_min || 0);
-  const isUltraRare = (rarity) => {
-    if (!rarity) return false;
-    if (rarity.drop_effect === 'shimmer') return true;
-    const raritySpan = Math.max(0.0001, (rarity.max_roll - rarity.min_roll));
-    return rollSpan > 0 && (raritySpan / rollSpan) <= 0.05;
-  };
+  const isUltraRare = (rarity) => rarity && rarity.drop_effect === 'shimmer';
 
   const html = [...grouped.values()].map((x) => {
     const effectClass = x.rarity.drop_effect ? `effect-${x.rarity.drop_effect}` : '';
     const ultraClass = isUltraRare(x.rarity) ? 'effect-ultra' : '';
     const qtyHtml = x.qty > 1 ? `<span class="qty">x${x.qty}</span>` : '';
-    return `<div class="drop-row ${effectClass} ${ultraClass}">${badge(x.rarity)} <b>${x.item.name}</b>${qtyHtml} <small>лучший roll ${x.bestRoll}</small></div>`;
+    return `<div class="drop-row ${effectClass} ${ultraClass}" style="--drop-color:${x.rarity.color || '#3b82f6'}">${badge(x.rarity)} <span class="item-cell">${itemThumb(x.item.image_path, x.item.name)}<b>${x.item.name}</b>${qtyHtml}</span> <small>лучший roll ${x.bestRoll}</small></div>`;
   }).join('') || '<i>Все выпадения скрыты фильтром</i>';
 
   const hiddenInfo = res.hidden_results_count ? `<small>Скрыто фильтром: ${res.hidden_results_count}</small>` : '';

@@ -27,7 +27,6 @@ class CaseSimulator:
                 "total_opened": 0,
                 "total_spent": 0,
                 "by_rarity": {},
-                "by_item": {},
             },
             "settings": {
                 "roll_min": 0,
@@ -67,6 +66,13 @@ class CaseSimulator:
         filters.pop("item_visible", None)
 
         settings.setdefault("levels", LevelSettings().to_dict())
+
+        self.data.setdefault("stats", {})
+        stats = self.data["stats"]
+        stats["total_opened"] = int(stats.get("total_opened", 0))
+        stats["total_spent"] = float(stats.get("total_spent", 0))
+        stats.setdefault("by_rarity", {})
+        stats.pop("by_item", None)
 
         if not self.data.get("rarities"):
             self.data["rarities"] = [
@@ -197,6 +203,10 @@ class CaseSimulator:
     def open_case(self, times: int = 1) -> dict:
         times = max(1, int(times))
         settings = self.data["settings"]
+        stats = self.data.setdefault("stats", {})
+        stats.setdefault("total_opened", 0)
+        stats.setdefault("total_spent", 0)
+        stats.setdefault("by_rarity", {})
         roll_min = settings["roll_min"]
         roll_max = settings["roll_max"]
 
@@ -212,10 +222,9 @@ class CaseSimulator:
                 continue
 
             self.data["inventory"][item["id"]] = self.data["inventory"].get(item["id"], 0) + 1
-            self.data["stats"]["total_opened"] += 1
-            self.data["stats"]["total_spent"] += settings["open_price"]
-            self.data["stats"]["by_rarity"][rarity["id"]] = self.data["stats"]["by_rarity"].get(rarity["id"], 0) + 1
-            self.data["stats"]["by_item"][item["id"]] = self.data["stats"]["by_item"].get(item["id"], 0) + 1
+            stats["total_opened"] += 1
+            stats["total_spent"] += settings["open_price"]
+            stats["by_rarity"][rarity["id"]] = stats["by_rarity"].get(rarity["id"], 0) + 1
             drop = {
                 "roll": round(roll, 3),
                 "rarity": rarity,
@@ -437,7 +446,7 @@ class CaseSimulator:
         return {"ok": True, "state": self.state()}
 
     def reset_stats(self) -> dict:
-        self.data["stats"] = {"total_opened": 0, "total_spent": 0, "by_rarity": {}, "by_item": {}}
+        self.data["stats"] = {"total_opened": 0, "total_spent": 0, "by_rarity": {}}
         self._append_history("reset_stats", {})
         self.save()
         return {"ok": True, "state": self.state()}
