@@ -58,3 +58,18 @@ class API:
 
     def play_rarity_sound(self, rarity_id):
         return self.store.play_rarity_sound(rarity_id)
+
+
+    def pick_sound_file(self):
+        try:
+            import webview
+
+            windows = webview.windows
+            if not windows:
+                return {"ok": False, "message": "Окно не найдено"}
+            paths = windows[0].create_file_dialog(webview.OPEN_DIALOG, allow_multiple=False, file_types=("Audio files (*.wav;*.mp3;*.ogg;*.flac)",))
+            if not paths:
+                return {"ok": True, "path": ""}
+            return {"ok": True, "path": paths[0]}
+        except Exception as err:
+            return {"ok": False, "message": str(err), "path": ""}

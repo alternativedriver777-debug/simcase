@@ -9,6 +9,8 @@ from typing import Dict, Optional, Tuple
 from .models import Item, LevelSettings, Rarity
 
 DATA_FILE = "case_simulator_data.json"
+SUPPORTED_DROP_EFFECTS = {"", "neon"}
+SUPPORTED_THEMES = {"dark", "light"}
 
 
 class CaseSimulator:
@@ -31,6 +33,7 @@ class CaseSimulator:
                 "roll_min": 0,
                 "roll_max": 100,
                 "open_price": 1,
+                "appearance": {"theme": "dark"},
                 "filters": {
                     "rarity_hidden": {},
                     "item_hidden": {},
@@ -51,21 +54,26 @@ class CaseSimulator:
                 pass
 
         self.data.setdefault("settings", {})
-        self.data["settings"].setdefault("filters", {"rarity_hidden": {}, "item_hidden": {}})
-        filters = self.data["settings"]["filters"]
+        settings = self.data["settings"]
+        settings.setdefault("appearance", {"theme": "dark"})
+        if settings["appearance"].get("theme") not in SUPPORTED_THEMES:
+            settings["appearance"]["theme"] = "dark"
+
+        settings.setdefault("filters", {"rarity_hidden": {}, "item_hidden": {}})
+        filters = settings["filters"]
         filters.setdefault("rarity_hidden", {})
         filters.setdefault("item_hidden", {})
-        # Backward compatibility with old filter model.
         filters.pop("rarity_visible", None)
         filters.pop("item_visible", None)
-        self.data["settings"].setdefault("levels", LevelSettings().to_dict())
+
+        settings.setdefault("levels", LevelSettings().to_dict())
 
         if not self.data.get("rarities"):
             self.data["rarities"] = [
                 asdict(Rarity.create(name="Обычная", min_roll=0, max_roll=60, color="#b0b0b0")),
-                asdict(Rarity.create(name="Редкая", min_roll=60, max_roll=85, color="#4f8cff")),
-                asdict(Rarity.create(name="Эпическая", min_roll=85, max_roll=97, color="#bb6eff")),
-                asdict(Rarity.create(name="Легендарная", min_roll=97, max_roll=100, color="#ff9f1a")),
+                asdict(Rarity.create(name="Редкая", min_roll=60, max_roll=85, color="#4f8cff", drop_effect="neon")),
+                asdict(Rarity.create(name="Эпическая", min_roll=85, max_roll=97, color="#bb6eff", drop_effect="neon")),
+                asdict(Rarity.create(name="Легендарная", min_roll=97, max_roll=100, color="#ff9f1a", drop_effect="neon")),
             ]
 
         if not self.data.get("items"):
@@ -80,6 +88,8 @@ class CaseSimulator:
         for rarity in self.data["rarities"]:
             rarity.setdefault("drop_sound", "")
             rarity.setdefault("drop_effect", "")
+            if rarity["drop_effect"] not in SUPPORTED_DROP_EFFECTS:
+                rarity["drop_effect"] = ""
 
         self.save()
 
@@ -139,66 +149,66 @@ class CaseSimulator:
         return True, "ok"
 
     def normalize_rarity_ranges(self) -> dict:
-        """Auto-distribute rarity ranges across roll interval preserving order."""
         settings = self.data["settings"]
         rarities = sorted(self.data["rarities"], key=lambda r: r["min_roll"])
         if not rarities:
             return {"ok": False, "message": "Нет редкостей для нормализации"}
 
-        roll_min = settings["roll_min"]
-        roll_max = settings["roll_max"]
-        span = roll_max - roll_min
-        step = span / len(rarities)
+        low = float(settings["roll_min"])
+        high = float(settings["roll_max"])
+        if low >= high:
+            return {"ok": False, "message": "roll_min должен быть меньше roll_max"}
 
-        cursor = roll_min
+        step = (high - low) / len(rarities)
+        cur = low
         for idx, rarity in enumerate(rarities):
-            rarity["min_roll"] = round(cursor, 3)
-            cursor = roll_max if idx == len(rarities) - 1 else cursor + step
-            rarity["max_roll"] = round(cursor, 3)
+            rarity["min_roll"] = round(cur, 3)
+            next_cur = high if idx == len(rarities) - 1 else cur + step
+            rarity["max_roll"] = round(next_cur, 3)
+            cur = next_cur
 
-        self._append_history("normalize_rarities", {"count": len(rarities)})
+        self._append_history("normalize_rarity_ranges", {"count": len(rarities)})
         self.save()
         return {"ok": True, "state": self.state()}
 
     def level_progress(self) -> dict:
-        opened = int(self.data["stats"]["total_opened"])
-        levels = self.data["settings"].get("levels", LevelSettings().to_dict())
-        base = max(1, int(levels.get("base_xp", 8)))
-        growth = max(1.01, float(levels.get("xp_growth", 1.35)))
+        opened = int(self.data["stats"].get("total_opened", 0))
+        levels_cfg = self.data["settings"].get("levels", LevelSettings().to_dict())
+        base = max(1, int(levels_cfg.get("base_xp", 8)))
+        growth = max(1.01, float(levels_cfg.get("xp_growth", 1.35)))
 
         level = 1
-        spent = 0
+        xp_left = opened
         need = base
-        while opened >= spent + need:
-            spent += need
+        while xp_left >= need:
+            xp_left -= need
             level += 1
             need = int(round(base * (growth ** (level - 1))))
-            need = max(1, need)
 
+        progress = xp_left / need if need > 0 else 0
         return {
+            "xp": opened,
             "level": level,
-            "xp_total": opened,
-            "xp_current": opened - spent,
-            "xp_needed": need,
-            "progress": round((opened - spent) / need, 4) if need else 1,
+            "xp_in_level": xp_left,
+            "xp_for_next": need,
+            "progress": round(progress, 4),
         }
 
     def open_case(self, times: int = 1) -> dict:
         times = max(1, int(times))
-        valid, msg = self._validate_rarity_ranges()
-        if not valid:
-            return {"ok": False, "message": msg}
+        settings = self.data["settings"]
+        roll_min = settings["roll_min"]
+        roll_max = settings["roll_max"]
 
         result = []
         visible_result = []
-        settings = self.data["settings"]
         for _ in range(times):
-            roll = random.uniform(settings["roll_min"], settings["roll_max"])
+            roll = random.uniform(roll_min, roll_max)
             rarity = self._roll_rarity(roll)
-            if rarity is None:
+            if not rarity:
                 continue
             item = self._pick_item_by_rarity(rarity["id"])
-            if item is None:
+            if not item:
                 continue
 
             self.data["inventory"][item["id"]] = self.data["inventory"].get(item["id"], 0) + 1
@@ -233,13 +243,17 @@ class CaseSimulator:
         return bool(rarity_hidden.get(rarity_id) or item_hidden.get(item_id))
 
     def add_rarity(self, payload: dict) -> dict:
+        drop_effect = payload.get("drop_effect", "")
+        if drop_effect not in SUPPORTED_DROP_EFFECTS:
+            return {"ok": False, "message": "Неподдерживаемый эффект редкости"}
+
         rarity = asdict(Rarity.create(
             name=payload["name"],
             min_roll=float(payload["min_roll"]),
             max_roll=float(payload["max_roll"]),
             color=payload.get("color", "#888888"),
             drop_sound=payload.get("drop_sound", ""),
-            drop_effect=payload.get("drop_effect", ""),
+            drop_effect=drop_effect,
         ))
         self.data["rarities"].append(rarity)
         valid, msg = self._validate_rarity_ranges()
@@ -258,7 +272,8 @@ class CaseSimulator:
                 rarity["max_roll"] = float(payload.get("max_roll", rarity["max_roll"]))
                 rarity["color"] = payload.get("color", rarity["color"])
                 rarity["drop_sound"] = payload.get("drop_sound", rarity.get("drop_sound", ""))
-                rarity["drop_effect"] = payload.get("drop_effect", rarity.get("drop_effect", ""))
+                drop_effect = payload.get("drop_effect", rarity.get("drop_effect", ""))
+                rarity["drop_effect"] = drop_effect if drop_effect in SUPPORTED_DROP_EFFECTS else ""
                 valid, msg = self._validate_rarity_ranges()
                 if not valid:
                     return {"ok": False, "message": msg}
@@ -279,8 +294,9 @@ class CaseSimulator:
                 rarity["min_roll"] = float(row.get("min_roll", rarity["min_roll"]))
                 rarity["max_roll"] = float(row.get("max_roll", rarity["max_roll"]))
                 rarity["color"] = row.get("color", rarity["color"])
-                rarity["drop_effect"] = row.get("drop_effect", rarity.get("drop_effect", ""))
                 rarity["drop_sound"] = row.get("drop_sound", rarity.get("drop_sound", ""))
+                drop_effect = row.get("drop_effect", rarity.get("drop_effect", ""))
+                rarity["drop_effect"] = drop_effect if drop_effect in SUPPORTED_DROP_EFFECTS else ""
             valid, msg = self._validate_rarity_ranges()
             if not valid:
                 self.data["rarities"] = snapshot
@@ -401,6 +417,12 @@ class CaseSimulator:
                 settings["levels"]["base_xp"] = max(1, int(levels["base_xp"]))
             if "xp_growth" in levels:
                 settings["levels"]["xp_growth"] = max(1.01, float(levels["xp_growth"]))
+
+        appearance = payload.get("appearance", {})
+        if appearance:
+            settings.setdefault("appearance", {"theme": "dark"})
+            theme = appearance.get("theme", settings["appearance"].get("theme", "dark"))
+            settings["appearance"]["theme"] = theme if theme in SUPPORTED_THEMES else "dark"
 
         valid, msg = self._validate_rarity_ranges()
         if not valid:
