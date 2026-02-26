@@ -49,8 +49,23 @@ table { width: 100%; border-collapse: collapse; }
 th, td { padding: 7px; border-bottom: 1px solid var(--line); font-size: 13px; text-align: left; }
 .badge { padding: 2px 8px; border-radius: 999px; border: 1px solid; display: inline-block; font-size: 12px; }
 small { color: var(--muted); }
-.drop-row { margin: 5px 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: color-mix(in oklab, var(--panel), transparent 12%); }
-.drop-row.effect-neon { box-shadow: 0 0 10px color-mix(in oklab, var(--accent), transparent 45%), 0 0 20px color-mix(in oklab, var(--accent), transparent 72%); }
+.drop-row { margin: 6px 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: color-mix(in oklab, var(--panel), transparent 12%); transition: transform .2s ease, box-shadow .25s ease; }
+.drop-row:hover { transform: translateY(-1px); }
+.drop-row .qty { margin-left: 8px; display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: #fff; background: color-mix(in oklab, var(--accent), black 12%); }
+.drop-row.effect-neon { box-shadow: 0 0 12px color-mix(in oklab, var(--accent), transparent 45%), 0 0 22px color-mix(in oklab, var(--accent), transparent 72%); }
+.drop-row.effect-pulse { animation: pulseGlow 1.8s ease-in-out infinite; }
+.drop-row.effect-shimmer { background-image: linear-gradient(110deg, transparent 25%, color-mix(in oklab, var(--accent), white 80%) 48%, transparent 72%); background-size: 220% 100%; animation: shimmerMove 2.6s linear infinite; }
+.drop-row.effect-ultra { border-color: #ffd54a; box-shadow: 0 0 14px color-mix(in oklab, #ffd54a, transparent 45%), 0 0 26px color-mix(in oklab, #ff5ec9, transparent 65%); background: radial-gradient(circle at top right, color-mix(in oklab, #ffd54a, transparent 72%), transparent 42%), color-mix(in oklab, var(--panel), transparent 10%); }
+
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 0 transparent; }
+  50% { box-shadow: 0 0 16px color-mix(in oklab, var(--accent), transparent 50%); }
+}
+
+@keyframes shimmerMove {
+  0% { background-position: 180% 0; }
+  100% { background-position: -40% 0; }
+}
 
 @media (max-width: 1050px) {
   .grid { grid-template-columns: 1fr; }
@@ -121,7 +136,7 @@ small { color: var(--muted); }
       <input id="rarity-color" type="color" value="#888888">
       <input id="rarity-sound" placeholder="Файл звука" style="min-width:260px">
       <button onclick="pickSoundForNewRarity()">Выбрать звук…</button>
-      <select id="rarity-effect"><option value="">Без эффекта</option><option value="neon">Neon</option></select>
+      <select id="rarity-effect"><option value="">Без эффекта</option><option value="neon">Neon</option><option value="pulse">Pulse</option><option value="shimmer">Shimmer</option></select>
       <button onclick="addRarity()">Добавить</button>
     </div>
   </section>
@@ -200,7 +215,7 @@ function renderItems() {
 }
 
 function effectSelect(value) {
-  return `<select data-k="drop_effect"><option value="" ${!value ? 'selected' : ''}>—</option><option value="neon" ${value === 'neon' ? 'selected' : ''}>neon</option></select>`;
+  return `<select data-k="drop_effect"><option value="" ${!value ? 'selected' : ''}>—</option><option value="neon" ${value === 'neon' ? 'selected' : ''}>neon</option><option value="pulse" ${value === 'pulse' ? 'selected' : ''}>pulse</option><option value="shimmer" ${value === 'shimmer' ? 'selected' : ''}>shimmer</option></select>`;
 }
 
 function renderRarities() {
@@ -283,15 +298,34 @@ async function openCases() {
   if (!res || !res.ok) return;
 
   const visible = (res.visible_results || res.results || []).slice(0, 150);
-  const html = visible.map((x) => {
+  const grouped = new Map();
+  for (const drop of visible) {
+    const key = `${drop.item.id}::${drop.rarity.id}`;
+    if (!grouped.has(key)) grouped.set(key, { ...drop, qty: 0, bestRoll: drop.roll });
+    const current = grouped.get(key);
+    current.qty += 1;
+    if (drop.roll > current.bestRoll) current.bestRoll = drop.roll;
+  }
+
+  const rollSpan = (state.settings.roll_max || 100) - (state.settings.roll_min || 0);
+  const isUltraRare = (rarity) => {
+    if (!rarity) return false;
+    if (rarity.drop_effect === 'shimmer') return true;
+    const raritySpan = Math.max(0.0001, (rarity.max_roll - rarity.min_roll));
+    return rollSpan > 0 && (raritySpan / rollSpan) <= 0.05;
+  };
+
+  const html = [...grouped.values()].map((x) => {
     const effectClass = x.rarity.drop_effect ? `effect-${x.rarity.drop_effect}` : '';
-    return `<div class="drop-row ${effectClass}">${badge(x.rarity)} <b>${x.item.name}</b> <small>roll ${x.roll}</small></div>`;
+    const ultraClass = isUltraRare(x.rarity) ? 'effect-ultra' : '';
+    const qtyHtml = x.qty > 1 ? `<span class="qty">x${x.qty}</span>` : '';
+    return `<div class="drop-row ${effectClass} ${ultraClass}">${badge(x.rarity)} <b>${x.item.name}</b>${qtyHtml} <small>лучший roll ${x.bestRoll}</small></div>`;
   }).join('') || '<i>Все выпадения скрыты фильтром</i>';
 
   const hiddenInfo = res.hidden_results_count ? `<small>Скрыто фильтром: ${res.hidden_results_count}</small>` : '';
   document.getElementById('open-results').innerHTML = hiddenInfo + html;
 
-  for (const drop of visible.slice(0, 5)) {
+  for (const drop of [...grouped.values()].slice(0, 5)) {
     if (drop.rarity && drop.rarity.drop_sound) {
       await api('play_rarity_sound', drop.rarity.id);
     }
