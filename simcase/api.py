@@ -35,6 +35,9 @@ class API:
     def delete_item(self, item_id):
         return self.store.delete_item(item_id)
 
+    def update_items_bulk(self, rows):
+        return self.store.update_items_bulk(rows)
+
     def adjust_inventory(self, item_id, delta):
         return self.store.adjust_inventory(item_id, int(delta))
 

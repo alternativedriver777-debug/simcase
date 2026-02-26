@@ -120,6 +120,9 @@ small { color: var(--muted); }
       <input id="item-description" placeholder="Описание">
       <button onclick="addItem()">Добавить</button>
     </div>
+    <div class="row" style="margin-top:8px">
+      <button class="primary" onclick="saveItemsBulk()">Сохранить правки предметов</button>
+    </div>
     <table id="items-table"></table>
   </section>
 
@@ -232,10 +235,14 @@ function renderPlayer() {
   document.getElementById('quick-stats').innerHTML = `<div>Открыто кейсов: <b>${state.stats.total_opened}</b></div><div>Потрачено: <b>${state.stats.total_spent}</b></div>`;
 }
 
+function itemRaritySelect(value) {
+  return `<select data-k="rarity_id">${state.rarities.map((r) => `<option value="${r.id}" ${r.id === value ? 'selected' : ''}>${r.name}</option>`).join('')}</select>`;
+}
+
 function renderItems() {
   document.getElementById('item-rarity').innerHTML = state.rarities.map((r) => `<option value="${r.id}">${r.name}</option>`).join('');
-  const rows = state.items.map((i) => `<tr><td><span class="item-cell">${itemThumb(i.image_path, i.name)}${i.name}</span></td><td>${badge(rarityById(i.rarity_id))}</td><td>${i.weight}</td><td><button onclick="delItem('${i.id}')">Удалить</button></td></tr>`).join('');
-  document.getElementById('items-table').innerHTML = `<tr><th>Название</th><th>Редкость</th><th>Вес</th><th></th></tr>${rows}`;
+  const rows = state.items.map((i) => `<tr data-id="${i.id}"><td><input data-k="name" value="${escapeHtml(i.name)}"></td><td>${itemRaritySelect(i.rarity_id)}</td><td><input data-k="weight" type="number" step="0.1" min="0" value="${i.weight}" style="width:90px"></td><td><input data-k="image_path" value="${escapeHtml(i.image_path || '')}" placeholder="URL картинки"></td><td><input data-k="description" value="${escapeHtml(i.description || '')}" placeholder="Описание"></td><td><button onclick="delItem('${i.id}')">Удалить</button></td></tr>`).join('');
+  document.getElementById('items-table').innerHTML = `<tr><th>Название</th><th>Редкость</th><th>Вес</th><th>Картинка</th><th>Описание</th><th></th></tr>${rows}`;
 }
 
 function effectSelect(value) {
@@ -362,6 +369,15 @@ async function addItem() {
 
 async function delItem(id) {
   if (confirm('Удалить предмет?')) await api('delete_item', id);
+}
+
+async function saveItemsBulk() {
+  const rows = [...document.querySelectorAll('#items-table tr[data-id]')].map((tr) => {
+    const obj = { id: tr.dataset.id };
+    for (const el of tr.querySelectorAll('[data-k]')) obj[el.dataset.k] = el.value;
+    return obj;
+  });
+  await api('update_items_bulk', rows);
 }
 
 async function addRarity() {
