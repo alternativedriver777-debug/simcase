@@ -9,7 +9,7 @@ from typing import Dict, Optional, Tuple
 from .models import Item, LevelSettings, Rarity
 
 DATA_FILE = "case_simulator_data.json"
-SUPPORTED_DROP_EFFECTS = {"", "neon"}
+SUPPORTED_DROP_EFFECTS = {"", "neon", "pulse", "shimmer"}
 SUPPORTED_THEMES = {"dark", "light"}
 
 
