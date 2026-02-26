@@ -1,5 +1,4 @@
 import json
-import os
 import random
 import time
 import uuid
@@ -7,6 +6,7 @@ from dataclasses import asdict
 from typing import Dict, Optional, Tuple
 
 from .models import Item, LevelSettings, Rarity
+from .storage import SplitJsonStorage
 
 DATA_FILE = "case_simulator_data.json"
 SUPPORTED_DROP_EFFECTS = {"", "neon", "pulse", "shimmer"}
@@ -18,6 +18,7 @@ class CaseSimulator:
 
     def __init__(self, path: str = DATA_FILE):
         self.path = path
+        self.storage = SplitJsonStorage(path)
         self.data = {
             "rarities": [],
             "items": [],
@@ -43,14 +44,7 @@ class CaseSimulator:
         self._load_or_create_defaults()
 
     def _load_or_create_defaults(self):
-        if os.path.exists(self.path):
-            try:
-                with open(self.path, "r", encoding="utf-8") as f:
-                    loaded = json.load(f)
-                for k, v in loaded.items():
-                    self.data[k] = v
-            except (json.JSONDecodeError, OSError):
-                pass
+        self.data = self.storage.load(self.data)
 
         self.data.setdefault("settings", {})
         settings = self.data["settings"]
@@ -100,8 +94,7 @@ class CaseSimulator:
         self.save()
 
     def save(self):
-        with open(self.path, "w", encoding="utf-8") as f:
-            json.dump(self.data, f, ensure_ascii=False, indent=2)
+        self.storage.save(self.data)
 
     def _append_history(self, action: str, payload: dict):
         self.data["history"].insert(0, {
@@ -150,7 +143,7 @@ class CaseSimulator:
 
         ranges = sorted((r["min_roll"], r["max_roll"], r["name"]) for r in self.data["rarities"])
         for idx in range(1, len(ranges)):
-            if ranges[idx][0] < ranges[idx - 1][1]:
+            if ranges[idx][0] < ranges[idx - 1][1] and abs(ranges[idx][0] - ranges[idx - 1][1]) > 1e-9:
                 return False, f"Диапазоны {ranges[idx - 1][2]} и {ranges[idx][2]} пересекаются"
         return True, "ok"
 
@@ -333,10 +326,13 @@ class CaseSimulator:
     def add_item(self, payload: dict) -> dict:
         if payload["rarity_id"] not in self._rarity_map():
             return {"ok": False, "message": "Указанная редкость не существует"}
+        weight = float(payload.get("weight", 1))
+        if weight < 0:
+            return {"ok": False, "message": "Вес предмета не может быть отрицательным"}
         item = asdict(Item.create(
             name=payload["name"],
             rarity_id=payload["rarity_id"],
-            weight=float(payload.get("weight", 1)),
+            weight=weight,
             image_path=payload.get("image_path", ""),
             description=payload.get("description", ""),
         ))
@@ -351,15 +347,46 @@ class CaseSimulator:
             if item["id"] == item_id:
                 if "rarity_id" in payload and payload["rarity_id"] not in rarity_map:
                     return {"ok": False, "message": "Указанная редкость не существует"}
+                weight = float(payload.get("weight", item["weight"]))
+                if weight < 0:
+                    return {"ok": False, "message": "Вес предмета не может быть отрицательным"}
                 item["name"] = payload.get("name", item["name"])
                 item["rarity_id"] = payload.get("rarity_id", item["rarity_id"])
-                item["weight"] = float(payload.get("weight", item["weight"]))
+                item["weight"] = weight
                 item["image_path"] = payload.get("image_path", item["image_path"])
                 item["description"] = payload.get("description", item["description"])
                 self._append_history("update_item", item)
                 self.save()
                 return {"ok": True, "state": self.state()}
         return {"ok": False, "message": "Предмет не найден"}
+
+    def update_items_bulk(self, rows: list[dict]) -> dict:
+        item_map = self._item_map()
+        rarity_map = self._rarity_map()
+        snapshot = json.loads(json.dumps(self.data["items"]))
+        try:
+            for row in rows:
+                item = item_map.get(row["id"])
+                if not item:
+                    continue
+                rarity_id = row.get("rarity_id", item["rarity_id"])
+                if rarity_id not in rarity_map:
+                    raise ValueError("bad_rarity")
+                weight = float(row.get("weight", item["weight"]))
+                if weight < 0:
+                    raise ValueError("bad_weight")
+                item["name"] = row.get("name", item["name"])
+                item["rarity_id"] = rarity_id
+                item["weight"] = weight
+                item["image_path"] = row.get("image_path", item.get("image_path", ""))
+                item["description"] = row.get("description", item.get("description", ""))
+        except (KeyError, TypeError, ValueError):
+            self.data["items"] = snapshot
+            return {"ok": False, "message": "Ошибка в данных массового обновления предметов"}
+
+        self._append_history("update_items_bulk", {"count": len(rows)})
+        self.save()
+        return {"ok": True, "state": self.state()}
 
     def delete_item(self, item_id: str) -> dict:
         before = len(self.data["items"])
@@ -415,26 +442,32 @@ class CaseSimulator:
 
     def update_settings(self, payload: dict) -> dict:
         settings = self.data["settings"]
-        for key in ("roll_min", "roll_max", "open_price"):
-            if key in payload:
-                settings[key] = float(payload[key])
+        snapshot = json.loads(json.dumps(settings))
+        try:
+            for key in ("roll_min", "roll_max", "open_price"):
+                if key in payload:
+                    settings[key] = float(payload[key])
 
-        levels = payload.get("levels", {})
-        if levels:
-            settings.setdefault("levels", LevelSettings().to_dict())
-            if "base_xp" in levels:
-                settings["levels"]["base_xp"] = max(1, int(levels["base_xp"]))
-            if "xp_growth" in levels:
-                settings["levels"]["xp_growth"] = max(1.01, float(levels["xp_growth"]))
+            levels = payload.get("levels", {})
+            if levels:
+                settings.setdefault("levels", LevelSettings().to_dict())
+                if "base_xp" in levels:
+                    settings["levels"]["base_xp"] = max(1, int(levels["base_xp"]))
+                if "xp_growth" in levels:
+                    settings["levels"]["xp_growth"] = max(1.01, float(levels["xp_growth"]))
 
-        appearance = payload.get("appearance", {})
-        if appearance:
-            settings.setdefault("appearance", {"theme": "dark"})
-            theme = appearance.get("theme", settings["appearance"].get("theme", "dark"))
-            settings["appearance"]["theme"] = theme if theme in SUPPORTED_THEMES else "dark"
+            appearance = payload.get("appearance", {})
+            if appearance:
+                settings.setdefault("appearance", {"theme": "dark"})
+                theme = appearance.get("theme", settings["appearance"].get("theme", "dark"))
+                settings["appearance"]["theme"] = theme if theme in SUPPORTED_THEMES else "dark"
+        except (TypeError, ValueError):
+            self.data["settings"] = snapshot
+            return {"ok": False, "message": "Ошибка в значениях настроек"}
 
         valid, msg = self._validate_rarity_ranges()
         if not valid:
+            self.data["settings"] = snapshot
             return {"ok": False, "message": msg}
         self._append_history("update_settings", settings)
         self.save()
