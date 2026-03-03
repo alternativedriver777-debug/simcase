@@ -309,10 +309,10 @@ function renderInventory() {
     .map(([id, c]) => {
       const i = state.items.find((x) => x.id === id);
       if (!i) return '';
-      return `<tr><td><span class="item-cell">${itemThumb(i.image_path, i.name)}${i.name}</span></td><td>${c}</td><td><button onclick="adj('${id}',1)">+1</button> <button onclick="adj('${id}',-1)">-1</button></td></tr>`;
+      return `<tr><td><span class="item-cell">${itemThumb(i.image_path, i.name)}${i.name}</span></td><td>${c}</td><td><div class="row"><input id="consume-${id}" type="number" min="1" value="1" style="width:90px"><button onclick="consumeItem('${id}')">Списать</button></div></td></tr>`;
     })
     .join('');
-  document.getElementById('inventory-table').innerHTML = `<tr><th>Предмет</th><th>Кол-во</th><th></th></tr>${rows || '<tr><td colspan="3"><i>Инвентарь пуст</i></td></tr>'}`;
+  document.getElementById('inventory-table').innerHTML = `<tr><th>Предмет</th><th>Кол-во</th><th>Списание</th></tr>${rows || '<tr><td colspan="3"><i>Инвентарь пуст</i></td></tr>'}`;
 }
 
 function renderFilters() {
@@ -395,10 +395,15 @@ async function openCases(countOverride = null) {
   const hiddenInfo = res.hidden_results_count ? `<small>Скрыто фильтром: ${res.hidden_results_count}</small>` : '';
   document.getElementById('open-results').innerHTML = hiddenInfo + html;
 
-  for (const drop of grouped.slice(0, 5)) {
-    if (drop.rarity && drop.rarity.drop_sound) {
-      await api('play_rarity_sound', drop.rarity.id);
-    }
+  const rarestWithSound = grouped
+    .filter((drop) => drop.rarity && drop.rarity.drop_sound)
+    .sort((a, b) => {
+      if (b.rarity.min_roll !== a.rarity.min_roll) return b.rarity.min_roll - a.rarity.min_roll;
+      return b.rarity.max_roll - a.rarity.max_roll;
+    })[0];
+
+  if (rarestWithSound) {
+    await api('play_rarity_sound', rarestWithSound.rarity.id);
   }
 
   return true;
@@ -487,8 +492,14 @@ async function delRarity(id) {
   if (confirm('Удалить редкость?')) await api('delete_rarity', id);
 }
 
-async function adj(id, d) {
-  await api('adjust_inventory', id, d);
+async function consumeItem(id) {
+  const amountEl = document.getElementById(`consume-${id}`);
+  const amount = parseInt((amountEl && amountEl.value) || '1', 10);
+  if (!Number.isFinite(amount) || amount < 1) {
+    setStatus('Введите корректное количество для списания (минимум 1)', true);
+    return;
+  }
+  await api('adjust_inventory', id, -amount);
 }
 
 async function clearInventory() {
