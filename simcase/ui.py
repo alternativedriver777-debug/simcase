@@ -241,8 +241,8 @@ function itemRaritySelect(value) {
 
 function renderItems() {
   document.getElementById('item-rarity').innerHTML = state.rarities.map((r) => `<option value="${r.id}">${r.name}</option>`).join('');
-  const rows = state.items.map((i) => `<tr data-id="${i.id}"><td><input data-k="name" value="${escapeHtml(i.name)}"></td><td>${itemRaritySelect(i.rarity_id)}</td><td><input data-k="weight" type="number" step="0.1" min="0" value="${i.weight}" style="width:90px"></td><td><input data-k="image_path" value="${escapeHtml(i.image_path || '')}" placeholder="URL картинки"></td><td><input data-k="description" value="${escapeHtml(i.description || '')}" placeholder="Описание"></td><td><button onclick="delItem('${i.id}')">Удалить</button></td></tr>`).join('');
-  document.getElementById('items-table').innerHTML = `<tr><th>Название</th><th>Редкость</th><th>Вес</th><th>Картинка</th><th>Описание</th><th></th></tr>${rows}`;
+  const rows = state.items.map((i) => `<tr data-id="${i.id}"><td><input data-k="name" value="${escapeHtml(i.name)}"></td><td>${itemRaritySelect(i.rarity_id)}</td><td><input data-k="weight" type="number" step="0.1" min="0" value="${i.weight}" style="width:90px"></td><td><div class="row">${itemThumb(i.image_path, i.name)}<input data-k="image_path" value="${escapeHtml(i.image_path || '')}" placeholder="URL картинки"></div></td><td><input data-k="description" value="${escapeHtml(i.description || '')}" placeholder="Описание"></td><td><button onclick="delItem('${i.id}')">Удалить</button></td></tr>`).join('');
+  document.getElementById('items-table').innerHTML = `<tr><th>Название</th><th>Редкость</th><th>Вес</th><th>Картинка + превью</th><th>Описание</th><th></th></tr>${rows}`;
 }
 
 function effectSelect(value) {
