@@ -328,29 +328,20 @@ async function openCases() {
   const res = await api('open_case', parseInt(document.getElementById('open-times').value || '1', 10));
   if (!res || !res.ok) return;
 
-  const visible = (res.visible_results || res.results || []).slice(0, 150);
-  const grouped = new Map();
-  for (const drop of visible) {
-    const key = `${drop.item.id}::${drop.rarity.id}`;
-    if (!grouped.has(key)) grouped.set(key, { ...drop, qty: 0, bestRoll: drop.roll });
-    const current = grouped.get(key);
-    current.qty += 1;
-    if (drop.roll > current.bestRoll) current.bestRoll = drop.roll;
-  }
-
+  const grouped = res.grouped_visible_results || [];
   const isUltraRare = (rarity) => rarity && rarity.drop_effect === 'shimmer';
 
-  const html = [...grouped.values()].map((x) => {
+  const html = grouped.map((x) => {
     const effectClass = x.rarity.drop_effect ? `effect-${x.rarity.drop_effect}` : '';
     const ultraClass = isUltraRare(x.rarity) ? 'effect-ultra' : '';
     const qtyHtml = x.qty > 1 ? `<span class="qty">x${x.qty}</span>` : '';
-    return `<div class="drop-row ${effectClass} ${ultraClass}" style="--drop-color:${x.rarity.color || '#3b82f6'}">${badge(x.rarity)} <span class="item-cell">${itemThumb(x.item.image_path, x.item.name)}<b>${x.item.name}</b>${qtyHtml}</span> <small>лучший roll ${x.bestRoll}</small></div>`;
+    return `<div class="drop-row ${effectClass} ${ultraClass}" style="--drop-color:${x.rarity.color || '#3b82f6'}">${badge(x.rarity)} <span class="item-cell">${itemThumb(x.item.image_path, x.item.name)}<b>${x.item.name}</b>${qtyHtml}</span> <small>лучший roll ${x.best_roll}</small></div>`;
   }).join('') || '<i>Все выпадения скрыты фильтром</i>';
 
   const hiddenInfo = res.hidden_results_count ? `<small>Скрыто фильтром: ${res.hidden_results_count}</small>` : '';
   document.getElementById('open-results').innerHTML = hiddenInfo + html;
 
-  for (const drop of [...grouped.values()].slice(0, 5)) {
+  for (const drop of grouped.slice(0, 5)) {
     if (drop.rarity && drop.rarity.drop_sound) {
       await api('play_rarity_sound', drop.rarity.id);
     }
