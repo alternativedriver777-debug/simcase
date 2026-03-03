@@ -53,15 +53,52 @@ small { color: var(--muted); }
 .drop-row:hover { transform: translateY(-1px); }
 .drop-row .qty { margin-left: 8px; display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: #fff; background: color-mix(in oklab, var(--accent), black 12%); }
 .drop-row.effect-neon { box-shadow: 0 0 12px color-mix(in oklab, var(--drop-color, var(--accent)), transparent 45%), 0 0 22px color-mix(in oklab, var(--drop-color, var(--accent)), transparent 72%); }
-.drop-row.effect-pulse { animation: pulseGlow 1.8s ease-in-out infinite; }
-.drop-row.effect-shimmer { background-image: linear-gradient(110deg, transparent 25%, color-mix(in oklab, var(--drop-color, var(--accent)), white 80%) 48%, transparent 72%); background-size: 220% 100%; animation: shimmerMove 2.6s linear infinite; }
+.drop-row.effect-pulse {
+  border-color: color-mix(in oklab, var(--drop-color, var(--line)), transparent 35%);
+  background:
+    radial-gradient(circle at 85% 18%, color-mix(in oklab, var(--drop-color, transparent), transparent 82%), transparent 40%),
+    linear-gradient(145deg, color-mix(in oklab, var(--drop-color, var(--panel)), transparent 92%) 0%, color-mix(in oklab, var(--panel), transparent 12%) 100%);
+  animation: pulseGlow 2.2s cubic-bezier(.4, 0, .2, 1) infinite, pulseFloat 2.2s ease-in-out infinite;
+}
+.drop-row.effect-shimmer {
+  border-color: color-mix(in oklab, var(--drop-color, var(--line)), transparent 30%);
+  background-image:
+    linear-gradient(110deg,
+      transparent 18%,
+      color-mix(in oklab, var(--drop-color, var(--accent)), transparent 72%) 38%,
+      color-mix(in oklab, var(--drop-color, var(--accent)), white 22%) 50%,
+      color-mix(in oklab, var(--drop-color, var(--accent)), transparent 72%) 62%,
+      transparent 82%
+    ),
+    linear-gradient(145deg, color-mix(in oklab, var(--drop-color, var(--panel)), transparent 92%) 0%, color-mix(in oklab, var(--panel), transparent 12%) 100%);
+  background-size: 220% 100%, 100% 100%;
+  animation: shimmerMove 2.2s linear infinite;
+}
 .drop-row.effect-ultra { border-color: #ffd54a; box-shadow: 0 0 14px color-mix(in oklab, #ffd54a, transparent 45%), 0 0 26px color-mix(in oklab, #ff5ec9, transparent 65%); background: radial-gradient(circle at top right, color-mix(in oklab, #ffd54a, transparent 72%), transparent 42%), color-mix(in oklab, var(--panel), transparent 10%); }
 .item-cell { display: inline-flex; align-items: center; gap: 8px; }
 .item-thumb { width: 34px; height: 34px; border-radius: 7px; object-fit: cover; border: 1px solid var(--line); background: var(--surface); }
 
 @keyframes pulseGlow {
-  0%, 100% { box-shadow: 0 0 0 transparent; }
-  50% { box-shadow: 0 0 16px color-mix(in oklab, var(--drop-color, var(--accent)), transparent 50%); }
+  0%, 100% {
+    box-shadow:
+      0 0 0 transparent,
+      0 0 0 transparent;
+  }
+  45% {
+    box-shadow:
+      0 0 20px color-mix(in oklab, var(--drop-color, var(--accent)), transparent 58%),
+      inset 0 0 0 1px color-mix(in oklab, var(--drop-color, var(--accent)), transparent 50%);
+  }
+  70% {
+    box-shadow:
+      0 0 10px color-mix(in oklab, var(--drop-color, var(--accent)), transparent 66%),
+      inset 0 0 0 1px color-mix(in oklab, var(--drop-color, var(--accent)), transparent 60%);
+  }
+}
+
+@keyframes pulseFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-1px) scale(1.005); }
 }
 
 @keyframes shimmerMove {
@@ -98,6 +135,14 @@ small { color: var(--muted); }
       <div class="row">
         <input id="open-times" type="number" min="1" value="1" style="width:100px">
         <button class="primary" onclick="openCases()">Открыть</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <label>Автооткрытие (мс)
+          <input id="open-interval" type="number" min="100" value="1000" style="width:120px">
+        </label>
+        <button class="primary" id="auto-open-start" onclick="startAutoOpen()">Запустить таймер</button>
+        <button class="danger" id="auto-open-stop" onclick="stopAutoOpen()" disabled>Остановить</button>
+        <small id="auto-open-status">Таймер не активен</small>
       </div>
       <div id="open-results" style="margin-top:10px;max-height:420px;overflow:auto"></div>
     </section>
@@ -174,6 +219,8 @@ small { color: var(--muted); }
 </div>
 <script>
 let state = null;
+let autoOpenTimerId = null;
+let autoOpenBusy = false;
 
 function escapeHtml(value) {
   const raw = `${value ?? ''}`;
@@ -324,8 +371,15 @@ async function api(name, ...args) {
   return result;
 }
 
-async function openCases() {
-  const res = await api('open_case', parseInt(document.getElementById('open-times').value || '1', 10));
+async function openCases(countOverride = null) {
+  const countRaw = countOverride ?? document.getElementById('open-times').value;
+  const count = parseInt(countRaw || '1', 10);
+  if (!Number.isFinite(count) || count < 1) {
+    setStatus('Укажите количество кейсов (минимум 1)', true);
+    return false;
+  }
+
+  const res = await api('open_case', count);
   if (!res || !res.ok) return;
 
   const grouped = res.grouped_visible_results || [];
@@ -346,6 +400,53 @@ async function openCases() {
       await api('play_rarity_sound', drop.rarity.id);
     }
   }
+
+  return true;
+}
+
+function updateAutoOpenUi() {
+  const isRunning = autoOpenTimerId !== null;
+  document.getElementById('auto-open-start').disabled = isRunning;
+  document.getElementById('auto-open-stop').disabled = !isRunning;
+  document.getElementById('auto-open-status').textContent = isRunning ? 'Таймер активен' : 'Таймер не активен';
+}
+
+function stopAutoOpen() {
+  if (autoOpenTimerId !== null) {
+    clearInterval(autoOpenTimerId);
+    autoOpenTimerId = null;
+  }
+  autoOpenBusy = false;
+  updateAutoOpenUi();
+}
+
+function startAutoOpen() {
+  if (autoOpenTimerId !== null) return;
+  const interval = parseInt(document.getElementById('open-interval').value || '1000', 10);
+  const count = parseInt(document.getElementById('open-times').value || '1', 10);
+
+  if (!Number.isFinite(interval) || interval < 100) {
+    setStatus('Интервал должен быть не меньше 100 мс', true);
+    return;
+  }
+  if (!Number.isFinite(count) || count < 1) {
+    setStatus('Укажите количество кейсов (минимум 1)', true);
+    return;
+  }
+
+  const tick = async () => {
+    if (autoOpenBusy) return;
+    autoOpenBusy = true;
+    try {
+      await openCases(count);
+    } finally {
+      autoOpenBusy = false;
+    }
+  };
+
+  autoOpenTimerId = setInterval(tick, interval);
+  updateAutoOpenUi();
+  tick();
 }
 
 async function addItem() {
@@ -462,6 +563,7 @@ window.addEventListener('pywebviewready', async () => {
     state = res.state;
     renderAll();
   }
+  updateAutoOpenUi();
 });
 </script>
 </body></html>
