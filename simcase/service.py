@@ -452,15 +452,18 @@ class CaseSimulator:
     def adjust_inventory(self, item_id: str, delta: int) -> dict:
         if item_id not in self._item_map():
             return {"ok": False, "message": "Предмет не найден"}
+        delta = int(delta)
+        if delta >= 0:
+            return {"ok": False, "message": "Разрешено только списание предметов из инвентаря"}
         cur = self.data["inventory"].get(item_id, 0)
-        new_val = cur + int(delta)
+        new_val = cur + delta
         if new_val < 0:
             return {"ok": False, "message": "Недостаточно предметов в инвентаре"}
         if new_val == 0:
             self.data["inventory"].pop(item_id, None)
         else:
             self.data["inventory"][item_id] = new_val
-        self._append_history("consume_item" if delta < 0 else "add_inventory", {"item_id": item_id, "delta": delta})
+        self._append_history("consume_item", {"item_id": item_id, "delta": delta})
         self.save()
         return {"ok": True, "state": self.state()}
 
