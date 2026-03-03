@@ -11,6 +11,7 @@ from .storage import SplitJsonStorage
 DATA_FILE = "case_simulator_data.json"
 SUPPORTED_DROP_EFFECTS = {"", "neon", "pulse", "shimmer"}
 SUPPORTED_THEMES = {"dark", "light"}
+MAX_RAW_RESULTS = 500
 
 
 class CaseSimulator:
@@ -130,6 +131,16 @@ class CaseSimulator:
                 return item
         return candidates[-1]
 
+    @staticmethod
+    def _pick_item_from_pool(pool: Optional[list[tuple[dict, float]]], total_weight: float) -> Optional[dict]:
+        if not pool or total_weight <= 0:
+            return None
+        point = random.uniform(0, total_weight)
+        for item, cumulative_weight in pool:
+            if point <= cumulative_weight:
+                return item
+        return pool[-1][0]
+
     def _validate_rarity_ranges(self) -> Tuple[bool, str]:
         settings = self.data["settings"]
         roll_min = settings["roll_min"]
@@ -203,18 +214,35 @@ class CaseSimulator:
         roll_min = settings["roll_min"]
         roll_max = settings["roll_max"]
 
+        include_raw_results = times <= MAX_RAW_RESULTS
         result = []
         visible_result = []
+        history_sample = []
+        hidden_results_count = 0
+        grouped_visible: Dict[tuple[str, str], dict] = {}
+        opened_count = 0
+
+        weights_by_rarity: Dict[str, list[tuple[dict, float]]] = {}
+        totals_by_rarity: Dict[str, float] = {}
+        for item in self.data["items"]:
+            if item["weight"] <= 0:
+                continue
+            rarity_id = item["rarity_id"]
+            current_total = totals_by_rarity.get(rarity_id, 0.0) + item["weight"]
+            totals_by_rarity[rarity_id] = current_total
+            weights_by_rarity.setdefault(rarity_id, []).append((item, current_total))
+
         for _ in range(times):
             roll = random.uniform(roll_min, roll_max)
             rarity = self._roll_rarity(roll)
             if not rarity:
                 continue
-            item = self._pick_item_by_rarity(rarity["id"])
+            item = self._pick_item_from_pool(weights_by_rarity.get(rarity["id"]), totals_by_rarity.get(rarity["id"], 0.0))
             if not item:
                 continue
 
             self.data["inventory"][item["id"]] = self.data["inventory"].get(item["id"], 0) + 1
+            opened_count += 1
             stats["total_opened"] += 1
             stats["total_spent"] += settings["open_price"]
             stats["by_rarity"][rarity["id"]] = stats["by_rarity"].get(rarity["id"], 0) + 1
@@ -224,17 +252,39 @@ class CaseSimulator:
                 "item": item,
                 "hidden_by_filter": self._is_hidden_drop(rarity["id"], item["id"]),
             }
-            result.append(drop)
-            if not drop["hidden_by_filter"]:
-                visible_result.append(drop)
+            if len(history_sample) < 100:
+                history_sample.append(drop)
+            if include_raw_results:
+                result.append(drop)
+                if not drop["hidden_by_filter"]:
+                    visible_result.append(drop)
 
-        self._append_history("open_case", {"times": times, "results": result[:100], "count_results": len(result)})
+            if drop["hidden_by_filter"]:
+                hidden_results_count += 1
+                continue
+
+            group_key = (item["id"], rarity["id"])
+            group = grouped_visible.get(group_key)
+            if not group:
+                grouped_visible[group_key] = {
+                    "item": item,
+                    "rarity": rarity,
+                    "qty": 1,
+                    "best_roll": drop["roll"],
+                }
+            else:
+                group["qty"] += 1
+                if drop["roll"] > group["best_roll"]:
+                    group["best_roll"] = drop["roll"]
+
+        self._append_history("open_case", {"times": times, "results": history_sample, "count_results": opened_count})
         self.save()
         return {
             "ok": True,
             "results": result,
             "visible_results": visible_result,
-            "hidden_results_count": len(result) - len(visible_result),
+            "grouped_visible_results": list(grouped_visible.values()),
+            "hidden_results_count": hidden_results_count,
             "state": self.state(),
         }
 
